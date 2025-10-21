@@ -34,6 +34,8 @@ const ApplyForm = ({ open, onClose, job, userProfile }) => {
   const [coverLetter, setCoverLetter] = useState('');
   const [parsedCv, setParsedCv] = useState(null);
   const [formValues, setFormValues] = useState({});
+  const [parseLoading, setParseLoading] = useState(false);
+  const [parseError, setParseError] = useState(null);
 
   const handleNext = () => {
     setActiveStep((prevActiveStep) => prevActiveStep + 1);
@@ -52,6 +54,8 @@ const ApplyForm = ({ open, onClose, job, userProfile }) => {
   };
 
   const uploadAndParseCv = async (file) => {
+    setParseError(null);
+    setParseLoading(true);
     try {
       const token = localStorage.getItem('token');
       const fd = new FormData();
@@ -64,6 +68,10 @@ const ApplyForm = ({ open, onClose, job, userProfile }) => {
       }
     } catch (err) {
       console.error('Parse failed', err.response?.data || err.message);
+      setParseError(err.response?.data?.msg || err.message || 'Parse failed');
+      setParsedCv(null);
+    } finally {
+      setParseLoading(false);
     }
   };
 
@@ -185,6 +193,14 @@ const ApplyForm = ({ open, onClose, job, userProfile }) => {
               value={coverLetter}
               onChange={(e) => setCoverLetter(e.target.value)}
             />
+            {parseLoading && <Typography sx={{ mt: 1 }} color="text.secondary">Parsing CV... please wait.</Typography>}
+            {parseError && <Typography sx={{ mt: 1 }} color="error">Parse error: {parseError}</Typography>}
+            {parsedCv && (
+              <Box sx={{ mt: 2, p: 2, border: '1px dashed', borderColor: 'divider', borderRadius: 1 }}>
+                <Typography variant="subtitle2">Parsed preview (raw)</Typography>
+                <pre style={{ maxHeight: 200, overflow: 'auto' }}>{JSON.stringify(parsedCv, null, 2)}</pre>
+              </Box>
+            )}
           </Box>
         );
       case 2:

@@ -10,8 +10,16 @@ const mongoose = require('mongoose');
 // Helper to send a file buffer to Affinda v3 and poll for result
 async function sendToAffinda({ filePath, filename, workspace }) {
   const AFFINDA_API_KEY = process.env.AFFINDA_API_KEY;
-  const AFFINDA_URL = process.env.AFFINDA_URL || 'https://api.affinda.com';
+  const rawAffindaUrl = process.env.AFFINDA_URL || 'https://api.affinda.com';
   if (!AFFINDA_API_KEY) throw new Error('AFFINDA_API_KEY not configured');
+
+  // Normalize the configured URL so callers can set either the base URL
+  // (e.g. https://api.affinda.com) or a URL that already contains /v3 or
+  // /v3/documents. We ensure apiBase ends with exactly '/v3' so we don't
+  // accidentally call '/v3/documents/v3/documents' which causes 404s.
+  const normalized = rawAffindaUrl.replace(/\/+$|\s+/g, '');
+  const base = normalized.includes('/v3') ? normalized.replace(/\/v3.*$/i, '') : normalized;
+  const apiBase = `${base}/v3`;
 
   const form = new FormData();
   form.append('file', fs.createReadStream(filePath), filename);
@@ -19,7 +27,16 @@ async function sendToAffinda({ filePath, filename, workspace }) {
 
   const headers = { Authorization: `Bearer ${AFFINDA_API_KEY}`, ...form.getHeaders() };
 
-  const res = await axios.post(`${AFFINDA_URL}/v3/documents`, form, { headers });
+  const postUrl = `${apiBase}/documents`;
+  let res;
+  try {
+    res = await axios.post(postUrl, form, { headers });
+  } catch (err) {
+    console.error('Affinda POST error', err.response?.status, err.response?.data || err.message);
+    // surface a cleaner error message back to callers
+    throw new Error(`Affinda request failed: ${err.response?.status || err.message}`);
+  }
+
   if (!res.data || !res.data.id) return res.data;
 
   const docId = res.data.id;
@@ -28,7 +45,18 @@ async function sendToAffinda({ filePath, filename, workspace }) {
   const delayMs = 2000;
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
     await new Promise(r => setTimeout(r, delayMs));
-    const statusRes = await axios.get(`${AFFINDA_URL}/v3/documents/${docId}`, { headers });
+    const statusUrl = `${apiBase}/documents/${docId}`;
+    let statusRes;
+    try {
+      statusRes = await axios.get(statusUrl, { headers });
+    } catch (err) {
+      console.error('Affinda GET error', statusUrl, err.response?.status, err.response?.data || err.message);
+      // If document isn't found (404) treat as a hard error; otherwise continue polling
+      if (err.response && err.response.status === 404) {
+        throw new Error('Affinda document not found (404)');
+      }
+      continue;
+    }
     if (statusRes.data && statusRes.data.meta && statusRes.data.meta.ready) {
       return statusRes.data;
     }
